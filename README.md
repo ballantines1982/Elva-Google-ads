@@ -1,23 +1,33 @@
-# Google Ads MCP-server
+# Ads MCP-server (Google, Meta, TikTok, Snapchat)
 
 En HTTPS-baserad MCP-server (streamable-http transport) som kopplar
-ChatGPT/Claude till Google Ads API. Exponerar verktyg för att läsa
-Google Ads-data via GAQL och för att utföra ett fåtal kontrollerade
-skrivoperationer (skapa/pausa/aktivera annonser).
+ChatGPT/Claude till flera annonsplattformars API:er:
+
+- **Google Ads** - läsning via GAQL + ett fåtal kontrollerade
+  skrivoperationer (skapa/pausa/aktivera annonser).
+- **Meta (Facebook/Instagram) Ads, TikTok Ads, Snapchat Ads** - **endast
+  läsning** (kampanjer + rapportering/insights). Inga skrivoperationer
+  stöds för dessa tre.
 
 ## Projektstruktur
 
 ```
-server.py             - MCP-server, tool-definitioner (FastMCP)
-google_ads_client.py  - klient-init, GAQL-exekvering, mutate-hjälpfunktioner
-config.py             - miljövariabler, autentiseringskonfiguration
+server.py               - MCP-server, tool-definitioner (FastMCP)
+google_ads_client.py    - Google Ads: klient-init, GAQL, mutate-hjälpfunktioner
+meta_ads_client.py      - Meta Ads: läsning via Graph API Marketing-endpoints
+tiktok_ads_client.py    - TikTok Ads: läsning via TikTok Marketing API
+snapchat_ads_client.py  - Snapchat Ads: läsning via Snapchat Marketing API
+http_utils.py           - delad HTTP-hjälpfunktion (timeout/felhantering) för de tre ovan
+config.py               - miljövariabler, autentiseringskonfiguration för alla fyra
 requirements.txt
-Dockerfile             - för deploy på Railway/Render
-Procfile                - alternativ för Render/Heroku-liknande deploy
+Dockerfile               - för deploy på Railway/Render
+Procfile                  - alternativ för Render/Heroku-liknande deploy
 .env.example
 ```
 
 ## Verktyg som exponeras
+
+### Google Ads (läsning + begränsad, kontrollerad skrivning)
 
 | Verktyg | Beskrivning |
 |---|---|
@@ -29,6 +39,47 @@ Procfile                - alternativ för Render/Heroku-liknande deploy
 
 Alla `customer_id` normaliseras automatiskt (bindestreck/mellanslag tas bort),
 så både `"123-456-7890"` och `"1234567890"` fungerar.
+
+### Meta (Facebook/Instagram) Ads - endast läsning
+
+| Verktyg | Beskrivning |
+|---|---|
+| `list_meta_campaigns(ad_account_id)` | Listar kampanjer (id, namn, status, objective, budget). |
+| `run_meta_insights_query(ad_account_id, fields, level, date_preset, time_range, time_increment)` | Kör en Insights-rapport (t.ex. spend/impressions/clicks per kampanj/dag). |
+
+`ad_account_id` normaliseras automatiskt med `"act_"`-prefix om det saknas.
+
+### TikTok Ads - endast läsning
+
+| Verktyg | Beskrivning |
+|---|---|
+| `list_tiktok_campaigns(advertiser_id)` | Listar kampanjer för ett annonsörskonto. |
+| `run_tiktok_report(advertiser_id, metrics, start_date, end_date, dimensions, data_level)` | Kör en integrated report (rapportering). |
+
+### Snapchat Ads - endast läsning
+
+| Verktyg | Beskrivning |
+|---|---|
+| `list_snapchat_campaigns(ad_account_id)` | Listar kampanjer för ett ad account. |
+| `get_snapchat_stats(ad_account_id, fields, start_time, end_time, granularity)` | Hämtar statistik (rapportering). |
+
+Access token förnyas automatiskt via refresh token - ingen manuell tokenhantering efter första setup.
+
+> **Additivt:** Meta/TikTok/Snapchat kräver ENDAST sina egna miljövariabler
+> (se nedan). Saknas de startar servern ändå med Google Ads-verktygen
+> fungerande - respektive plattforms verktyg ger då ett tydligt
+> konfigurationsfel först när de faktiskt anropas.
+
+> **OBS - verifiera mot respektive plattforms egen dokumentation innan
+> produktion:** De här tre klienterna byggdes utan möjlighet att slå upp
+> plattformarnas live-dokumentation i den här sessionen (nätverksåtkomsten
+> var begränsad). Endpoints, fältnamn och API-versioner nedan speglar
+> respektive plattforms officiella, stabila kontrakt (Graph API, TikTok
+> Marketing API v1.3, Snapchat Marketing API v1) men annonsplattformar
+> deprecatar fält och API-versioner löpande - dubbelkolla mot
+> developers.facebook.com/docs/marketing-api,
+> business-api.tiktok.com/portal/docs och
+> marketingapi.snapchat.com/docs innan skarp drift.
 
 ## 1. Skaffa Google Ads API-uppgifter
 
@@ -77,7 +128,50 @@ som privatperson) är **OAuth-flödet ovan det som faktiskt fungerar** - använd
 service account-alternativet bara om du vet att din organisation har satt
 upp domain-wide delegation.
 
-## 2. Lokal installation
+## 2. Skaffa Meta / TikTok / Snapchat API-uppgifter (endast läsning)
+
+Dessa tre är **valfria/additiva** - hoppa över de du inte behöver just nu,
+servern startar ändå fint med bara Google Ads konfigurerat.
+
+### Meta (Facebook/Instagram) Ads
+
+1. Skapa (eller använd befintlig) app i [Meta for Developers](https://developers.facebook.com/apps/)
+   och lägg till produkten **Marketing API**.
+2. Skapa ett **System User** i din Business Manager (Business Settings →
+   Users → System Users), koppla det till ditt ad account med minst
+   `ads_read`-behörighet.
+3. Generera en **long-lived access token** för System User-kontot (via
+   Business Settings → System Users → Generate New Token, välj din app
+   och scope `ads_read`). Spara som `META_ACCESS_TOKEN`.
+4. Hitta ditt **ad account-id** i Ads Manager-URL:en eller under
+   Business Settings → Accounts → Ad Accounts (formatet `act_1234567890`
+   eller bara siffrorna - servern normaliserar automatiskt).
+
+> Fullständig, godkänd åtkomst till Marketing API kan kräva att appen
+> genomgår Metas App Review om ni ska läsa data för konton ni inte själva
+> äger/administrerar. Ett eget System User-token mot ert eget
+> Business-konto kräver normalt ingen App Review.
+
+### TikTok Ads
+
+1. Skapa en app i [TikTok for Business Developer-portalen](https://business-api.tiktok.com/portal)
+   och ansök om åtkomst till **Marketing API**.
+2. Auktorisera appen mot ert annonsörskonto (Authorization-flödet i
+   portalen) för att få en **access token**. Spara som `TIKTOK_ACCESS_TOKEN`.
+3. Hitta ert **advertiser_id** i TikTok Ads Manager (Kontoinställningar).
+
+### Snapchat Ads
+
+1. Skapa en OAuth2-app under [Snapchat Business Manager → Business Settings → API Access](https://businesshelp.snapchat.com/).
+2. Från appen får ni **client_id** och **client_secret**.
+3. Gör OAuth2-auktoriseringsflödet EN gång (webbläsarbaserat, ungefär som
+   Google Ads-flödet) för att få en **refresh_token** - spara den som
+   `SNAPCHAT_REFRESH_TOKEN`. Servern förnyar sedan access token automatiskt.
+4. Hitta ert **ad account-id** i Business Manager-URL:en eller kontoinställningarna.
+
+Lägg till de token/id ni skaffat i `.env` enligt `.env.example`.
+
+## 3. Lokal installation
 
 ```bash
 python3.11 -m venv venv
@@ -89,9 +183,11 @@ cp .env.example .env
 #   GOOGLE_ADS_DEVELOPER_TOKEN
 #   GOOGLE_ADS_CLIENT_ID / GOOGLE_ADS_CLIENT_SECRET / GOOGLE_ADS_REFRESH_TOKEN
 #   MCP_AUTH_TOKEN (valfri lokalt, men generera en riktig hemlighet innan deploy)
+#   META_ACCESS_TOKEN / TIKTOK_ACCESS_TOKEN / SNAPCHAT_CLIENT_ID+SECRET+REFRESH_TOKEN
+#   (valfria - hoppa över de plattformar ni inte ska läsa från än)
 ```
 
-## 3. Testa lokalt mot ett Google Ads-testkonto
+## 4. Testa lokalt mot ett Google Ads-testkonto
 
 Starta servern över stdio (enklast för snabb felsökning, ingen HTTP/auth
 inblandad):
@@ -146,7 +242,36 @@ asyncio.run(main())
 Byt ut `123-456-7890` mot ditt testkontos customer-id (finns i toppen av
 Google Ads-gränssnittet).
 
-## 4. Koppla till Claude / ChatGPT
+### Testa Meta / TikTok / Snapchat-verktygen
+
+Samma mönster, bara med andra tool-namn/argument:
+
+```python
+await session.call_tool("list_meta_campaigns", {"ad_account_id": "act_1234567890"})
+await session.call_tool("run_meta_insights_query", {
+    "ad_account_id": "act_1234567890",
+    "fields": ["campaign_name", "impressions", "clicks", "spend"],
+    "date_preset": "last_7d",
+})
+
+await session.call_tool("list_tiktok_campaigns", {"advertiser_id": "1234567890"})
+await session.call_tool("run_tiktok_report", {
+    "advertiser_id": "1234567890",
+    "metrics": ["spend", "impressions", "clicks"],
+    "start_date": "2024-01-01",
+    "end_date": "2024-01-07",
+})
+
+await session.call_tool("list_snapchat_campaigns", {"ad_account_id": "<snapchat-ad-account-id>"})
+await session.call_tool("get_snapchat_stats", {
+    "ad_account_id": "<snapchat-ad-account-id>",
+    "fields": ["spend", "impressions", "swipes"],
+    "start_time": "2024-01-01",
+    "end_time": "2024-01-07",
+})
+```
+
+## 5. Koppla till Claude / ChatGPT
 
 ### Claude Desktop (stdio, lokalt)
 
@@ -189,7 +314,7 @@ ChatGPT (Inställningar → Connectors → Developer mode) och Claude
 (Inställningar → Connectors → Add custom connector) - båda ber om en
 URL och stödjer att skicka med en bearer-token/API-nyckel.
 
-## 5. Deployment (Railway / Render)
+## 6. Deployment (Railway / Render)
 
 Repot innehåller både en `Dockerfile` och en `Procfile` - använd det som
 passar din valda plattform.
@@ -246,6 +371,10 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
   och valideras (måste vara enbart siffror efter normalisering).
 - Timeout för GAQL-queries och mutate-anrop styrs av
   `GOOGLE_ADS_TIMEOUT_SECONDS` (default 30 sekunder).
+- Meta/TikTok/Snapchat-anrop går via `http_utils.request_json()`, som
+  fångar timeouts, nätverksfel och HTTP-felstatusar och kastar ett tydligt
+  fel med motpartens svarskropp (där felmeddelandet oftast finns).
+  Timeout styrs av `ADS_HTTP_TIMEOUT_SECONDS` (default 30 sekunder).
 
 ## Vanliga fel
 
@@ -255,3 +384,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | `PERMISSION_DENIED` / `USER_PERMISSION_DENIED` | Kontot du anropar (`customer_id`) är inte kopplat till det Google-konto refresh-token genererades för, eller så saknas `GOOGLE_ADS_LOGIN_CUSTOMER_ID` när du går via ett manager-konto. |
 | `DEVELOPER_TOKEN_NOT_APPROVED` | Din developer token har bara test-access men du anropar ett riktigt (icke-test-)konto. |
 | `401 Unauthorized` från MCP-servern | Fel eller saknad `Authorization: Bearer <token>`-header mot din egen server (inte Google Ads API). |
+| `RuntimeError: ...-klienten är inte initierad` | Motsvarande plattforms miljövariabler (t.ex. `META_ACCESS_TOKEN`) saknas - lades inte till i `.env`/deploy-miljön, eller servern startades innan de sattes. |
+| Meta: `HTTP 400 ... Error validating access token` | Token har gått ut eller återkallats - generera ett nytt long-lived System User-token. |
+| TikTok: `code=40001`/`40002` m.fl. i felmeddelandet | Se `message`-fältet i felet - vanligast är fel `advertiser_id` eller att access token saknar rätt scope/kontokoppling. |
+| Snapchat: `Kunde inte förnya Snapchat access token` | Fel `SNAPCHAT_CLIENT_ID`/`SNAPCHAT_CLIENT_SECRET`, eller `SNAPCHAT_REFRESH_TOKEN` har återkallats - gör OAuth-flödet igen för en ny refresh token. |

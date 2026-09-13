@@ -1,14 +1,25 @@
 """
-Google Ads MCP-server.
+Google Ads MCP-server (+ läsning från Meta, TikTok och Snapchat Ads).
 
 Exponerar följande verktyg för LLM-klienter (ChatGPT, Claude m.fl.) via
 MCP:s streamable-http-transport på endpointen /mcp:
 
+Google Ads (läsning + begränsad, kontrollerad skrivning):
 - run_gaql_query   : kör valfri GAQL-query (huvudverktyget för läsning)
 - list_campaigns   : bekvämlighetsverktyg, listar kampanjer
 - create_search_ad : skapar en Responsive Search Ad (skapas ALLTID PAUSED)
 - pause_ad         : pausar en annons
 - enable_ad        : aktiverar en annons
+
+Meta (Facebook/Instagram) Ads, TikTok Ads, Snapchat Ads (endast läsning):
+- list_meta_campaigns / run_meta_insights_query
+- list_tiktok_campaigns / run_tiktok_report
+- list_snapchat_campaigns / get_snapchat_stats
+
+Meta/TikTok/Snapchat är additiva - saknas deras miljövariabler startar
+servern ändå (bara Google Ads är obligatoriskt), men respektive verktyg
+ger då ett tydligt konfigurationsfel om det anropas. Inga skrivoperationer
+finns för dessa tre plattformar.
 
 Kör lokalt över stdio (t.ex. för Claude Desktop-konfiguration):
     python server.py --transport stdio
@@ -33,6 +44,9 @@ from starlette.responses import JSONResponse
 
 import config
 import google_ads_client as gac
+import meta_ads_client as mac
+import snapchat_ads_client as sac
+import tiktok_ads_client as tac
 
 # --------------------------------------------------------------------------
 # Loggning. OBS: logga ALDRIG credentials, tokens eller service account-
@@ -63,7 +77,10 @@ mcp = FastMCP(
         "Verktyg för att läsa (via GAQL) och i begränsad omfattning skriva "
         "Google Ads-data. Alla skrivoperationer loggas för spårbarhet, och "
         "nya annonser skapas alltid med status PAUSED - de måste aktiveras "
-        "explicit med enable_ad() efter mänsklig granskning."
+        "explicit med enable_ad() efter mänsklig granskning. Utöver Google "
+        "Ads finns verktyg för att LÄSA data (kampanjer, rapportering) från "
+        "Meta (Facebook/Instagram) Ads, TikTok Ads och Snapchat Ads - inga "
+        "skrivoperationer stöds för dessa tre."
     ),
 )
 
@@ -179,6 +196,143 @@ def enable_ad(customer_id: str, ad_group_id: str, ad_id: str) -> dict:
     )
 
 
+@mcp.tool()
+def list_meta_campaigns(ad_account_id: str) -> dict:
+    """
+    Listar kampanjer i ett Meta (Facebook/Instagram) ad account: id, namn,
+    status och budget. Endast läsning.
+
+    Args:
+        ad_account_id: Meta ad account-id, med eller utan "act_"-prefix
+            (t.ex. "act_1234567890" eller "1234567890").
+
+    Returns:
+        dict: {"campaign_count": int, "campaigns": list[dict]}.
+    """
+    campaigns = mac.list_campaigns(ad_account_id)
+    return {"campaign_count": len(campaigns), "campaigns": campaigns}
+
+
+@mcp.tool()
+def run_meta_insights_query(
+    ad_account_id: str,
+    fields: list[str],
+    level: str = "campaign",
+    date_preset: str | None = "last_30d",
+    time_range: dict | None = None,
+    time_increment: str | None = None,
+) -> dict:
+    """
+    Kör en Insights-rapport (rapportering) mot Meta Marketing API. Endast läsning.
+
+    Args:
+        ad_account_id: Meta ad account-id, med eller utan "act_"-prefix.
+        fields: t.ex. ["campaign_name", "impressions", "clicks", "spend"].
+        level: "account" | "campaign" | "adset" | "ad".
+        date_preset: t.ex. "today", "last_7d", "last_30d". Ignoreras om time_range anges.
+        time_range: {"since": "YYYY-MM-DD", "until": "YYYY-MM-DD"} - tar över date_preset.
+        time_increment: t.ex. "1" för en rad per dag, annars aggregerat över perioden.
+
+    Returns:
+        dict: {"row_count": int, "rows": list[dict]}.
+    """
+    rows = mac.run_insights_query(
+        ad_account_id,
+        fields,
+        level=level,
+        date_preset=date_preset,
+        time_range=time_range,
+        time_increment=time_increment,
+    )
+    return {"row_count": len(rows), "rows": rows}
+
+
+@mcp.tool()
+def list_tiktok_campaigns(advertiser_id: str) -> dict:
+    """
+    Listar kampanjer för ett TikTok advertiser-konto. Endast läsning.
+
+    Args:
+        advertiser_id: TikTok advertiser-id.
+
+    Returns:
+        dict: {"campaign_count": int, "campaigns": list[dict]}.
+    """
+    campaigns = tac.list_campaigns(advertiser_id)
+    return {"campaign_count": len(campaigns), "campaigns": campaigns}
+
+
+@mcp.tool()
+def run_tiktok_report(
+    advertiser_id: str,
+    metrics: list[str],
+    start_date: str,
+    end_date: str,
+    dimensions: list[str] | None = None,
+    data_level: str = "AUCTION_CAMPAIGN",
+) -> dict:
+    """
+    Kör en integrated report (rapportering) mot TikTok Marketing API. Endast läsning.
+
+    Args:
+        advertiser_id: TikTok advertiser-id.
+        metrics: t.ex. ["spend", "impressions", "clicks", "conversion"].
+        start_date / end_date: "YYYY-MM-DD".
+        dimensions: t.ex. ["campaign_id", "stat_time_day"]. Default ["campaign_id"].
+        data_level: t.ex. "AUCTION_CAMPAIGN", "AUCTION_ADGROUP", "AUCTION_AD".
+
+    Returns:
+        dict: {"row_count": int, "rows": list[dict]}.
+    """
+    rows = tac.run_report(
+        advertiser_id,
+        metrics,
+        start_date,
+        end_date,
+        dimensions=dimensions,
+        data_level=data_level,
+    )
+    return {"row_count": len(rows), "rows": rows}
+
+
+@mcp.tool()
+def list_snapchat_campaigns(ad_account_id: str) -> dict:
+    """
+    Listar kampanjer för ett Snapchat ad account. Endast läsning.
+
+    Args:
+        ad_account_id: Snapchat ad account-id.
+
+    Returns:
+        dict: {"campaign_count": int, "campaigns": list[dict]}.
+    """
+    campaigns = sac.list_campaigns(ad_account_id)
+    return {"campaign_count": len(campaigns), "campaigns": campaigns}
+
+
+@mcp.tool()
+def get_snapchat_stats(
+    ad_account_id: str,
+    fields: list[str],
+    start_time: str,
+    end_time: str,
+    granularity: str = "DAY",
+) -> dict:
+    """
+    Hämtar statistik (rapportering) för ett Snapchat ad account. Endast läsning.
+
+    Args:
+        ad_account_id: Snapchat ad account-id.
+        fields: t.ex. ["spend", "impressions", "swipes"].
+        start_time / end_time: ISO 8601-tidsstämplar, t.ex. "2024-01-01T00:00:00.000-07:00".
+        granularity: "DAY" | "HOUR" | "LIFETIME" | "TOTAL".
+
+    Returns:
+        dict: rått svar från Snapchats stats-endpoint.
+    """
+    return sac.get_stats(ad_account_id, fields, start_time, end_time, granularity=granularity)
+
+
 class BearerTokenAuthMiddleware:
     """
     Enkel bearer-token-autentisering för HTTP-transporten (ren ASGI-middleware).
@@ -231,6 +385,27 @@ def build_http_app():
     return BearerTokenAuthMiddleware(inner_app, server_settings.auth_token)
 
 
+def _init_optional_platform(name: str, load_settings, init_client, timeout: float) -> None:
+    """
+    Initierar en tilläggsplattform (Meta/TikTok/Snapchat) om dess miljövariabler
+    är satta. Till skillnad från Google Ads (obligatoriskt) är dessa additiva -
+    saknad konfiguration bara loggas som en varning, servern startar ändå.
+    Anropas ett sådant plattforms verktyg innan det initierats ges ett tydligt
+    felmeddelande (se respektive klients _get_client()).
+    """
+    try:
+        settings = load_settings()
+    except config.ConfigError as exc:
+        logger.warning(
+            "%s är inte konfigurerad, hoppar över (dess verktyg ger ett tydligt "
+            "fel om de anropas): %s",
+            name,
+            exc,
+        )
+        return
+    init_client(settings, timeout=timeout)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Google Ads MCP-server")
     parser.add_argument(
@@ -242,9 +417,18 @@ def main() -> None:
     args = parser.parse_args()
 
     # Initiera Google Ads-klienten vid uppstart så konfigurationsfel upptäcks
-    # direkt, innan servern börjar ta emot anrop.
+    # direkt, innan servern börjar ta emot anrop. Google Ads är obligatoriskt.
     ads_settings = config.load_google_ads_settings()
     gac.init_client(ads_settings)
+
+    # Meta/TikTok/Snapchat är additiva tilläggsplattformar för läsning -
+    # saknas deras miljövariabler startar servern ändå.
+    http_timeout = config.load_server_settings().http_timeout_seconds
+    _init_optional_platform("Meta Ads", config.load_meta_ads_settings, mac.init_client, http_timeout)
+    _init_optional_platform("TikTok Ads", config.load_tiktok_ads_settings, tac.init_client, http_timeout)
+    _init_optional_platform(
+        "Snapchat Ads", config.load_snapchat_ads_settings, sac.init_client, http_timeout
+    )
 
     if args.transport == "stdio":
         # Lokal körning, t.ex. från Claude Desktops mcpServers-konfiguration.
