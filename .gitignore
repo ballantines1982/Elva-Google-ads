@@ -1,0 +1,27 @@
+# Secrets - committa aldrig dessa
+.env
+*.env
+!.env.example
+google-ads.yaml
+service-account*.json
+*.key.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+build/
+dist/
+
+# Logs
+*.log
+audit.log
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/

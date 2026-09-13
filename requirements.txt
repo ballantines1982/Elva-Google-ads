@@ -1,0 +1,5 @@
+mcp>=1.30.0,<2.0.0
+google-ads>=32.0.0,<33.0.0
+python-dotenv>=1.0.1
+uvicorn[standard]>=0.30.0
+starlette>=0.38.0
