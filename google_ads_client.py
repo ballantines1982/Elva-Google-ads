@@ -12,6 +12,7 @@ credentials/nycklar.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -21,6 +22,8 @@ from google.ads.googleads.errors import GoogleAdsException
 from google.api_core import protobuf_helpers
 from google.protobuf.json_format import MessageToDict
 
+import config
+import fake_data
 from config import GoogleAdsSettings, normalize_customer_id
 
 logger = logging.getLogger("google_ads_mcp.client")
@@ -70,6 +73,13 @@ def get_client() -> GoogleAdsClient:
     return _client
 
 
+def _mock_ad_id(ad_group_id: str) -> str:
+    # OBS: använder hashlib, inte inbyggda hash() - den senare är slumpad per
+    # process (PYTHONHASHSEED) och skulle ge olika ad-id vid varje omstart.
+    digest = hashlib.sha256(f"mock-ad-{ad_group_id}".encode("utf-8")).hexdigest()
+    return str(int(digest[:12], 16) % 9_000_000_000 + 1_000_000_000)
+
+
 def _handle_google_ads_exception(exc: GoogleAdsException, context: str) -> None:
     """Loggar en GoogleAdsException tydligt (code + message per fel) och kastar vidare."""
     request_id = exc.request_id
@@ -113,8 +123,11 @@ def run_query(customer_id: str, query: str, timeout: float = 30.0) -> list[dict[
     som en lista av dicts. search() itererar automatiskt över alla sidor, så
     hela resultatet samlas in oavsett hur många rader svaret innehåller.
     """
-    client = get_client()
     customer_id = normalize_customer_id(customer_id)
+    if config.MOCK_MODE:
+        return fake_data.gads_run_query(customer_id, query)
+
+    client = get_client()
     ga_service = client.get_service("GoogleAdsService")
 
     request = client.get_type("SearchGoogleAdsRequest")
@@ -208,9 +221,29 @@ def create_search_ad(
     _validate_rsa_assets(headlines, descriptions)
     if not final_url or not final_url.strip():
         raise GoogleAdsToolError("final_url får inte vara tomt.")
+    customer_id = normalize_customer_id(customer_id)
+
+    if config.MOCK_MODE:
+        ad_id = _mock_ad_id(ad_group_id)
+        resource_name = f"customers/{customer_id}/adGroupAds/{ad_group_id}~{ad_id}"
+        _log_write_operation(
+            action="create_search_ad",
+            customer_id=customer_id,
+            actor=actor,
+            detail=f"[MOCK] ad_group_id={ad_group_id} resource_name={resource_name} status=PAUSED",
+        )
+        return {
+            "resource_name": resource_name,
+            "ad_group_id": str(ad_group_id),
+            "ad_id": ad_id,
+            "status": "PAUSED",
+            "message": (
+                f"[MOCK_MODE] Responsive Search Ad 'skapad' med status PAUSED "
+                f"(annons-id: {ad_id}). Inget riktigt API-anrop gjordes."
+            ),
+        }
 
     client = get_client()
-    customer_id = normalize_customer_id(customer_id)
     ad_group_ad_service = client.get_service("AdGroupAdService")
     ad_group_service = client.get_service("AdGroupService")
 
@@ -274,8 +307,19 @@ def _set_ad_group_ad_status(
     actor: str,
     timeout: float = 30.0,
 ) -> dict[str, Any]:
-    client = get_client()
     customer_id = normalize_customer_id(customer_id)
+
+    if config.MOCK_MODE:
+        resource_name = f"customers/{customer_id}/adGroupAds/{ad_group_id}~{ad_id}"
+        _log_write_operation(
+            action=f"status_change:{status_enum_name}",
+            customer_id=customer_id,
+            actor=actor,
+            detail=f"[MOCK] ad_group_id={ad_group_id} ad_id={ad_id} resource_name={resource_name}",
+        )
+        return {"resource_name": resource_name, "status": status_enum_name}
+
+    client = get_client()
     ad_group_ad_service = client.get_service("AdGroupAdService")
 
     operation = client.get_type("AdGroupAdOperation")

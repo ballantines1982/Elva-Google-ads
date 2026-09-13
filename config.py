@@ -59,6 +59,24 @@ def _get_env(name: str, required: bool = False, default: Optional[str] = None) -
     return value or None
 
 
+# Mock-läge: kör servern helt utan riktiga credentials mot alla fyra
+# plattformarna och returnera påhittad-men-realistisk testdata istället
+# (se fake_data.py). Praktiskt för att testa/chatta mot verktygen innan man
+# har riktiga kontouppgifter. Sätts via miljövariabeln MOCK_MODE=true.
+MOCK_MODE: bool = (_get_env("MOCK_MODE", default="false") or "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+if MOCK_MODE:
+    logger.warning(
+        "MOCK_MODE=true - servern körs med FEJKAD data för Google/Meta/TikTok/Snapchat. "
+        "Inga riktiga credentials behövs och inga riktiga API-anrop görs. Ta bort eller "
+        "sätt MOCK_MODE=false för att köra mot riktiga konton."
+    )
+
+
 def normalize_customer_id(customer_id: str) -> str:
     """
     Normaliserar ett Google Ads customer-id.

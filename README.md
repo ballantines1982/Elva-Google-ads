@@ -187,7 +187,30 @@ cp .env.example .env
 #   (valfria - hoppa över de plattformar ni inte ska läsa från än)
 ```
 
-## 4. Testa lokalt mot ett Google Ads-testkonto
+## 4. Testa utan riktiga konton (MOCK_MODE)
+
+Vill ni chatta mot servern innan ni har riktiga API-uppgifter för alla fyra
+plattformarna? Sätt `MOCK_MODE=true` i `.env` (eller `set MOCK_MODE=true` i
+PowerShell för sessionen). Då hoppar servern över all riktig autentisering
+och alla verktyg svarar med påhittad men realistisk testdata (kampanjer,
+klick, kostnad, impressions m.m.) - se `fake_data.py`. Inga riktiga
+API-anrop görs, och ingen enda miljövariabel för Google/Meta/TikTok/
+Snapchat behöver vara ifylld.
+
+```bash
+# Windows (PowerShell)
+$env:MOCK_MODE = "true"
+python server.py --transport stdio
+```
+
+Koppla in servern i Claude Desktop/ChatGPT precis som vanligt (se avsnitt 6)
+och chatta - t.ex. "lista kampanjerna för kund 1234567890" eller "jämför
+CTR mellan mina Meta- och TikTok-kampanjer senaste veckan". Datan är
+deterministisk (samma id ger samma svar varje gång) men inte kopplad till
+något riktigt konto. Stäng av genom att ta bort `MOCK_MODE` eller sätta den
+till `false` när ni är redo att koppla in riktiga konton (avsnitt 1-2 ovan).
+
+## 5. Testa lokalt mot ett Google Ads-testkonto
 
 Starta servern över stdio (enklast för snabb felsökning, ingen HTTP/auth
 inblandad):
@@ -271,7 +294,7 @@ await session.call_tool("get_snapchat_stats", {
 })
 ```
 
-## 5. Koppla till Claude / ChatGPT
+## 6. Koppla till Claude / ChatGPT
 
 ### Claude Desktop (stdio, lokalt)
 
@@ -314,7 +337,7 @@ ChatGPT (Inställningar → Connectors → Developer mode) och Claude
 (Inställningar → Connectors → Add custom connector) - båda ber om en
 URL och stödjer att skicka med en bearer-token/API-nyckel.
 
-## 6. Deployment (Railway / Render)
+## 7. Deployment (Railway / Render)
 
 Repot innehåller både en `Dockerfile` och en `Procfile` - använd det som
 passar din valda plattform.

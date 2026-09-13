@@ -20,6 +20,8 @@ from typing import Any, Optional
 
 import httpx
 
+import config
+import fake_data
 from config import SnapchatAdsSettings
 from http_utils import HttpError, request_json
 
@@ -115,6 +117,8 @@ def list_campaigns(ad_account_id: str) -> list[dict[str, Any]]:
     ad_account_id = str(ad_account_id).strip()
     if not ad_account_id:
         raise SnapchatAdsToolError("ad_account_id saknas.")
+    if config.MOCK_MODE:
+        return fake_data.snapchat_list_campaigns(ad_account_id)
 
     campaigns: list[dict[str, Any]] = []
     url = f"{API_BASE}/adaccounts/{ad_account_id}/campaigns"
@@ -153,6 +157,10 @@ def get_stats(
         raise SnapchatAdsToolError("ad_account_id saknas.")
     if not fields:
         raise SnapchatAdsToolError("fields får inte vara tomt.")
+    if config.MOCK_MODE:
+        return fake_data.snapchat_get_stats(
+            ad_account_id, fields, start_time, end_time, granularity=granularity
+        )
 
     params = {
         "fields": ",".join(fields),

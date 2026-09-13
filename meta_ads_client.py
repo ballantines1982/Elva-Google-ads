@@ -19,6 +19,8 @@ from typing import Any, Optional
 
 import httpx
 
+import config
+import fake_data
 from config import MetaAdsSettings
 from http_utils import HttpError, request_json
 
@@ -84,8 +86,11 @@ def _paginated_get(client: httpx.Client, path: str, params: dict) -> list[dict[s
 
 def list_campaigns(ad_account_id: str) -> list[dict[str, Any]]:
     """Listar kampanjer för ett Meta ad account: id, namn, status, objective, budget."""
-    client, settings = _get_client()
     ad_account_id = normalize_ad_account_id(ad_account_id)
+    if config.MOCK_MODE:
+        return fake_data.meta_list_campaigns(ad_account_id)
+
+    client, settings = _get_client()
     params = {
         "access_token": settings.access_token,
         "fields": "id,name,status,effective_status,objective,daily_budget,lifetime_budget",
@@ -114,11 +119,20 @@ def run_insights_query(
         time_range: {"since": "YYYY-MM-DD", "until": "YYYY-MM-DD"} - tar över date_preset.
         time_increment: t.ex. "1" för en rad per dag, annars aggregerat över perioden.
     """
-    client, settings = _get_client()
     ad_account_id = normalize_ad_account_id(ad_account_id)
     if not fields:
         raise MetaAdsToolError("fields får inte vara tomt.")
+    if config.MOCK_MODE:
+        return fake_data.meta_run_insights_query(
+            ad_account_id,
+            fields,
+            level=level,
+            date_preset=date_preset,
+            time_range=time_range,
+            time_increment=time_increment,
+        )
 
+    client, settings = _get_client()
     params: dict[str, Any] = {
         "access_token": settings.access_token,
         "fields": ",".join(fields),

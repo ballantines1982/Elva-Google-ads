@@ -17,6 +17,8 @@ from typing import Any, Optional
 
 import httpx
 
+import config
+import fake_data
 from config import TikTokAdsSettings
 from http_utils import HttpError, request_json
 
@@ -73,6 +75,8 @@ def list_campaigns(advertiser_id: str) -> list[dict[str, Any]]:
     advertiser_id = str(advertiser_id).strip()
     if not advertiser_id:
         raise TikTokAdsToolError("advertiser_id saknas.")
+    if config.MOCK_MODE:
+        return fake_data.tiktok_list_campaigns(advertiser_id)
 
     campaigns: list[dict[str, Any]] = []
     page = 1
@@ -115,6 +119,15 @@ def run_report(
     if not metrics:
         raise TikTokAdsToolError("metrics får inte vara tomt.")
     dimensions = dimensions or ["campaign_id"]
+    if config.MOCK_MODE:
+        return fake_data.tiktok_run_report(
+            advertiser_id,
+            metrics,
+            start_date,
+            end_date,
+            dimensions=dimensions,
+            data_level=data_level,
+        )
 
     rows: list[dict[str, Any]] = []
     page = 1

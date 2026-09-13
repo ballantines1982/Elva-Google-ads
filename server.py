@@ -416,19 +416,31 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Initiera Google Ads-klienten vid uppstart så konfigurationsfel upptäcks
-    # direkt, innan servern börjar ta emot anrop. Google Ads är obligatoriskt.
-    ads_settings = config.load_google_ads_settings()
-    gac.init_client(ads_settings)
+    if config.MOCK_MODE:
+        # MOCK_MODE=true: hoppa över all riktig klient-initiering (Google Ads är
+        # annars obligatoriskt) - inga credentials behövs, se fake_data.py.
+        logger.warning(
+            "MOCK_MODE aktiverat - hoppar över init av riktiga API-klienter. "
+            "Alla verktyg (Google/Meta/TikTok/Snapchat) svarar med fejkad testdata."
+        )
+    else:
+        # Initiera Google Ads-klienten vid uppstart så konfigurationsfel upptäcks
+        # direkt, innan servern börjar ta emot anrop. Google Ads är obligatoriskt.
+        ads_settings = config.load_google_ads_settings()
+        gac.init_client(ads_settings)
 
-    # Meta/TikTok/Snapchat är additiva tilläggsplattformar för läsning -
-    # saknas deras miljövariabler startar servern ändå.
-    http_timeout = config.load_server_settings().http_timeout_seconds
-    _init_optional_platform("Meta Ads", config.load_meta_ads_settings, mac.init_client, http_timeout)
-    _init_optional_platform("TikTok Ads", config.load_tiktok_ads_settings, tac.init_client, http_timeout)
-    _init_optional_platform(
-        "Snapchat Ads", config.load_snapchat_ads_settings, sac.init_client, http_timeout
-    )
+        # Meta/TikTok/Snapchat är additiva tilläggsplattformar för läsning -
+        # saknas deras miljövariabler startar servern ändå.
+        http_timeout = config.load_server_settings().http_timeout_seconds
+        _init_optional_platform(
+            "Meta Ads", config.load_meta_ads_settings, mac.init_client, http_timeout
+        )
+        _init_optional_platform(
+            "TikTok Ads", config.load_tiktok_ads_settings, tac.init_client, http_timeout
+        )
+        _init_optional_platform(
+            "Snapchat Ads", config.load_snapchat_ads_settings, sac.init_client, http_timeout
+        )
 
     if args.transport == "stdio":
         # Lokal körning, t.ex. från Claude Desktops mcpServers-konfiguration.
